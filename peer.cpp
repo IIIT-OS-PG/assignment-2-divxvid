@@ -7,6 +7,8 @@
 #include <sys/types.h>
 #include <pthread.h>
 #include <arpa/inet.h>
+#include <vector>
+#include <string>
 
 #define CHUNK_SIZE 524288
 
@@ -15,6 +17,21 @@ struct transfer_unit
 	const char* my_IP ;
 	const int my_port ;
 };
+
+struct file_data
+{
+	char IP[32] ;
+	int port ;
+	char chunks_available[1536] ;
+
+	file_data() {}
+	file_data(char *a, int b, char *c)
+	{
+		strcpy(IP, a);
+		port = b ;
+		strcpy(chunks_available, c);
+	}
+} ;
 
 bool logged_in ;
 char *my_IP ;
@@ -103,7 +120,60 @@ int main(int argc, char* argv[])
 
 void download_file(int g_id, char *fname, char* dest_path)
 {
-	
+	if(!logged_in)
+	{
+		printf("Please log in to the system.\n");
+		return ;
+	}
+	int tracker_socket ;
+	if( (tracker_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	{
+		printf("Cannot create the socket.\n") ;
+		return;
+	}
+
+	struct sockaddr_in tracker_addr ;
+
+	bzero( (char*)&tracker_addr, sizeof tracker_addr ) ;
+	tracker_addr.sin_family = AF_INET ;
+	tracker_addr.sin_port = htons(tracker_port) ;
+	tracker_addr.sin_addr.s_addr = inet_addr(tracker_IP) ;
+
+	if( connect(tracker_socket, (struct sockaddr*)&tracker_addr, sizeof tracker_addr ) < 0 )
+	{
+		printf("cannot connect to the tracker.\n") ;
+		close(tracker_socket) ;
+		return ;
+	}
+
+	char cmd[32] = "download_file" ;
+	send(tracker_socket, cmd, sizeof cmd, 0) ;
+
+	char file_name[128] ;
+	strcpy(file_name, fname);
+	send(tracker_socket, file_name, sizeof file_name, 0) ;
+
+	int num_clients ;
+	recv(tracker_socket, &num_clients, sizeof num_clients, 0);
+
+	std::vector<file_data> clients_with_file ;
+	char IP[32] ;
+	int port ;
+	char chunks[1536] ;
+	for(int i = 0 ; i < num_clients ; ++i)
+	{
+		char trans[2048] ;
+		recv(tracker_socket, trans, sizeof trans, 0);
+		sscanf(trans, "%s %d %s", IP, &port, chunks);
+		clients_with_file.emplace_back(IP, port, chunks);
+	}
+
+	for(const file_data &fd : clients_with_file)
+	{
+		printf("%s %d %s\n", fd.IP, fd.port, fd.chunks_available);
+	}
+
+	close(tracker_socket) ;
 }
 
 void list_files(int g_id)

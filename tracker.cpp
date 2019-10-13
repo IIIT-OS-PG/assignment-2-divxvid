@@ -11,6 +11,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <map>
+#include <set>
 
 #define TRACKER_IP "127.0.0.1"
 #define TRACKER_PORT 33333
@@ -138,23 +139,63 @@ void upload_file(struct transfer_unit* tf)
 
 void list_files(struct transfer_unit* tf)
 {
-	std::map<std::string, std::vector<std::string> > files_in_tracker ;
+	/*std::map<std::string, std::vector<std::string> > files_in_tracker ;
 	for(const struct file_data &fd : files_info_vector)
 	{
 		char addx[64] ;
 		sprintf(addx, "%s %d", fd.IP, fd.port);
 		std::string temp(addx) ;
 		files_in_tracker[fd.file_name].push_back(temp);
+	}*/
+
+	std::set<std::string> files_in_tracker ;
+	for(const struct file_data &fd : files_info_vector)
+	{
+		std::string temp(fd.file_name) ;
+		files_in_tracker.insert(temp);
 	}
 
 	int num_files = files_in_tracker.size() ;
 	send(tf->peer_socket, &num_files, sizeof num_files, 0);
 
 	char f_name_s[128] ;
-	for(const auto &k : files_in_tracker)
+	for(const std::string &s : files_in_tracker)
 	{
-		strcpy(f_name_s, k.first.c_str());
+		strcpy(f_name_s, s.c_str());
 		send(tf->peer_socket, f_name_s, sizeof f_name_s, 0);
+	}
+}
+
+void download_file(struct transfer_unit* tf)
+{
+	char file_name[128] ;
+	recv(tf->peer_socket, file_name, sizeof file_name, 0);
+
+	std::map<std::string, std::vector<std::string> > files_in_tracker ;
+	for(const struct file_data &fd : files_info_vector)
+	{
+		char addx[2048] ;
+		sprintf(addx, "%s %d %s", fd.IP, fd.port, fd.chunks_available);
+		std::string temp(addx) ;
+		files_in_tracker[fd.file_name].push_back(temp);
+	}
+
+	int transmission_size ;
+	std::string f_name(file_name) ;
+	if(files_in_tracker.find(f_name) == files_in_tracker.end())
+	{
+		transmission_size = 0 ;
+	} else 
+	{
+		transmission_size = files_in_tracker[f_name].size() ;
+	}
+
+	send(tf->peer_socket, &transmission_size, sizeof transmission_size, 0) ;
+	for(const std::string &s : files_in_tracker[f_name])
+	{
+		char trans[2048] ;
+		strcpy(trans, s.c_str());
+		send(tf->peer_socket, trans, sizeof trans, 0) ;
 	}
 }
 
@@ -177,6 +218,9 @@ void* communicate_peer(void* args)
 	} else if(strcmp(cmd, "list_files") == 0)
 	{
 		list_files(tf);
+	} else if(strcmp(cmd, "download_file") == 0)
+	{
+		download_file(tf) ;
 	}
 
 	close(tf->peer_socket) ;
