@@ -24,12 +24,25 @@ struct transfer_unit
 
 struct file_data
 {
-	const char* IP ;
-	const int port ;
+	char file_name[128];
+	char IP[32] ;
+	int port ;
 	int group_id ;
 	int file_size ;
-	char* chunks_available ;
+	char chunks_available[1536] ;
+	file_data() {}
+	file_data(char* a, char *b, int c, int d, int e, char *f)
+	{
+		strcpy(file_name, a);
+		strcpy(IP, b) ;
+		port = c ;
+		group_id = d ;
+		file_size = e; 
+		strcpy(chunks_available, f); 
+	} 
 };
+
+std::vector<file_data> files_info_vector ;
 
 void update_client_info_file()
 {
@@ -109,6 +122,17 @@ void upload_file(struct transfer_unit* tf)
 	char info[2048] ;
 	recv(tf->peer_socket, info, sizeof info, 0);
 	printf("I received : %s\n", info);
+	char f_name[128] ;
+	char chunk_info[1536] ;
+	char peer_IP[32] ;
+	int peer_port, file_size, peer_g_id ;
+	sscanf(info, "%s %s %d %d %d %s", f_name, peer_IP, &peer_port, &peer_g_id, &file_size, chunk_info);
+	files_info_vector.emplace_back(f_name, peer_IP, peer_port, peer_g_id, file_size, chunk_info);
+	for(const file_data &fd : files_info_vector)
+	{
+		printf("fname : %s\nPeer IP : %s\nPeer port : %d\n", fd.file_name, fd.IP , fd.port);
+		printf("Peer GID : %d\nFile Size : %d\nChunk info : %s\n", fd.group_id, fd.file_size, fd.chunks_available);
+	}
 }
 
 void* communicate_peer(void* args)
