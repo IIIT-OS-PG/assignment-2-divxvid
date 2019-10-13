@@ -29,6 +29,8 @@ void login_and_register(const char*, const char*);
 void create_user(const char*, const char*) ;
 void logout() ;
 void upload_file(const char*, int);
+void list_files(int);
+void download_file(int, char*, char*);
 
 int main(int argc, char* argv[])
 {
@@ -80,11 +82,73 @@ int main(int argc, char* argv[])
 			char *g_id_s = strtok(NULL, " \n");
 			int g_id = atoi(g_id_s);
 			upload_file(f_name, g_id) ;
+		} else if(strcmp(cmd, "list_files") == 0)
+		{
+			char *gid_s = strtok(NULL, " \n") ;
+			int g_id = (gid_s == NULL ? 0 : atoi(gid_s));
+			list_files(g_id);
+		} else if(strcmp(cmd, "download_file") == 0)
+		{
+			char *gid_s = strtok(NULL, " \n") ;
+			char *file_name = strtok(NULL, " \n") ;
+			char *dest_path = strtok(NULL, " \n") ;
+			int gid = atoi(gid_s);
+			download_file(gid, file_name, dest_path);
 		}
 		else printf("Undefined command.\n") ;
 	}
 	
 	return 0 ;
+}
+
+void download_file(int g_id, char *fname, char* dest_path)
+{
+	
+}
+
+void list_files(int g_id)
+{
+	if(!logged_in)
+	{
+		printf("Please log in to the system.\n");
+		return ;
+	}
+	int tracker_socket ;
+	if( (tracker_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	{
+		printf("Cannot create the socket.\n") ;
+		return;
+	}
+
+	struct sockaddr_in tracker_addr ;
+
+	bzero( (char*)&tracker_addr, sizeof tracker_addr ) ;
+	tracker_addr.sin_family = AF_INET ;
+	tracker_addr.sin_port = htons(tracker_port) ;
+	tracker_addr.sin_addr.s_addr = inet_addr(tracker_IP) ;
+
+	if( connect(tracker_socket, (struct sockaddr*)&tracker_addr, sizeof tracker_addr ) < 0 )
+	{
+		printf("cannot connect to the tracker.\n") ;
+		close(tracker_socket) ;
+		return ;
+	}
+
+	char cmd[32] = "list_files" ;
+	send(tracker_socket, cmd, sizeof cmd, 0) ;
+	printf("COmmand sent.\n") ;
+	int n_files ;
+	recv(tracker_socket, &n_files, sizeof n_files, 0);
+
+	printf("The number of files is : %d\n", n_files);
+	char f_name_s[128] ;
+	for(int i = 0 ; i < n_files ; ++i)
+	{
+		recv(tracker_socket, f_name_s, sizeof f_name_s, 0);
+		printf("%d : %s\n", i+1, f_name_s);
+	}
+
+	close(tracker_socket);
 }
 
 void upload_file(const char* f_name, int g_id)
@@ -181,6 +245,11 @@ void logout()
 void login_and_register(const char* username, const char* passwd)
 {
 	if(logged_in) return ;
+	if(username == NULL || passwd == NULL)
+	{
+		printf("Empty username or password.\n");
+		return ;
+	}
 	FILE *fp ;
 	fp = fopen("authentication.txt", "r");
 	if(fp == 0)

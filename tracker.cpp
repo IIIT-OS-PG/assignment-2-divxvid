@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <map>
 
 #define TRACKER_IP "127.0.0.1"
 #define TRACKER_PORT 33333
@@ -135,6 +136,28 @@ void upload_file(struct transfer_unit* tf)
 	}
 }
 
+void list_files(struct transfer_unit* tf)
+{
+	std::map<std::string, std::vector<std::string> > files_in_tracker ;
+	for(const struct file_data &fd : files_info_vector)
+	{
+		char addx[64] ;
+		sprintf(addx, "%s %d", fd.IP, fd.port);
+		std::string temp(addx) ;
+		files_in_tracker[fd.file_name].push_back(temp);
+	}
+
+	int num_files = files_in_tracker.size() ;
+	send(tf->peer_socket, &num_files, sizeof num_files, 0);
+
+	char f_name_s[128] ;
+	for(const auto &k : files_in_tracker)
+	{
+		strcpy(f_name_s, k.first.c_str());
+		send(tf->peer_socket, f_name_s, sizeof f_name_s, 0);
+	}
+}
+
 void* communicate_peer(void* args)
 {
 	struct transfer_unit *tf = (transfer_unit*)args ;
@@ -151,6 +174,9 @@ void* communicate_peer(void* args)
 	} else if(strcmp(cmd, "upload_file") == 0)
 	{
 		upload_file(tf) ;
+	} else if(strcmp(cmd, "list_files") == 0)
+	{
+		list_files(tf);
 	}
 
 	close(tf->peer_socket) ;
