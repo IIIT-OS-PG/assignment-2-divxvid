@@ -8,6 +8,8 @@
 #include <pthread.h>
 #include <arpa/inet.h>
 
+#define CHUNK_SIZE 524288
+
 struct transfer_unit
 {
 	const char* my_IP ;
@@ -18,11 +20,15 @@ bool logged_in ;
 char *my_IP ;
 int my_port ;
 char *tracker_info_file ;
+char tracker_IP[32] ;
+int tracker_port ;
 
 int read_tracker_info(char*, int&, const char*);
 void* listen_as_server(void*) ;
 void login_and_register(const char*, const char*);
 void create_user(const char*, const char*) ;
+void logout() ;
+void upload_file(const char*, int);
 
 int main(int argc, char* argv[])
 {
@@ -36,6 +42,13 @@ int main(int argc, char* argv[])
 	my_IP = argv[1] ;
 	my_port = atoi(argv[2]) ;
 	tracker_info_file = argv[3] ;
+
+	if(read_tracker_info(tracker_IP, tracker_port, tracker_info_file) < 0)
+	{
+		/* ADD LOGIC FOR TWO TRACKER SYSTEM */
+		printf("Tracker info file seems to be unreadable/empty.\n") ;
+		return 0;
+	}
 
 	char command[1024] ;
 	while(1)
@@ -54,10 +67,115 @@ int main(int argc, char* argv[])
 			char *uname = strtok(NULL, " \n") ;
 			char *pwd = strtok(NULL, " \n") ;
 			create_user(uname, pwd) ;
-		} else printf("Undefined command.\n") ;
+		} else if(strcmp(cmd, "logout") == 0)
+		{
+			logout() ;
+		} else if(strcmp(cmd, "exit") == 0)
+		{
+			logout();
+			break ;
+		} else if (strcmp(cmd, "upload_file") == 0)
+		{
+			char *f_name = strtok(NULL, " \n");
+			char *g_id_s = strtok(NULL, " \n");
+			int g_id = atoi(g_id_s);
+			upload_file(f_name, g_id) ;
+		}
+		else printf("Undefined command.\n") ;
 	}
 	
 	return 0 ;
+}
+
+void upload_file(const char* f_name, int g_id)
+{
+	if(!logged_in)
+	{
+		printf("please log in to the system.\n");
+		return ;
+	}
+	int tracker_socket ;
+	if( (tracker_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	{
+		printf("Cannot create the socket.\n") ;
+		return;
+	}
+
+	struct sockaddr_in tracker_addr ;
+
+	bzero( (char*)&tracker_addr, sizeof tracker_addr ) ;
+	tracker_addr.sin_family = AF_INET ;
+	tracker_addr.sin_port = htons(tracker_port) ;
+	tracker_addr.sin_addr.s_addr = inet_addr(tracker_IP) ;
+
+	if( connect(tracker_socket, (struct sockaddr*)&tracker_addr, sizeof tracker_addr ) < 0 )
+	{
+		printf("cannot connect to the tracker.\n") ;
+		close(tracker_socket) ;
+		return ;
+	}
+
+	char chunk_info[1536] ;
+	FILE *fp = fopen(f_name, "rb");
+	if(fp == 0)
+	{
+		close(tracker_socket) ;
+		printf("File not found.\n");
+		return ;
+	}
+	fseek(fp, 0, SEEK_END) ;
+	int file_size = ftell(fp) ;
+	fclose(fp) ;
+
+	int num_chunks = file_size / CHUNK_SIZE + (file_size % CHUNK_SIZE == 0 ? 0 : 1) ;
+	for(int i = 0 ; i < num_chunks ; ++i)
+		chunk_info[i] = '1' ;
+	chunk_info[num_chunks] = '\0' ;
+	char cmd[32] = "upload_file";
+	send(tracker_socket, cmd, sizeof cmd, 0) ;
+
+	char info[2048] ;
+	sprintf(info, "%s %s %d %d %d %s", f_name, my_IP, my_port, g_id, file_size, chunk_info);
+	printf("INFO is : %s\n", info) ;
+
+	send(tracker_socket, info, sizeof info, 0) ;
+
+	close(tracker_socket) ;
+}
+
+void logout()
+{
+	if(!logged_in) return ;	
+	int tracker_socket ;
+	if( (tracker_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	{
+		printf("Cannot create the socket.\n") ;
+		return;
+	}
+
+	struct sockaddr_in tracker_addr ;
+
+	bzero( (char*)&tracker_addr, sizeof tracker_addr ) ;
+	tracker_addr.sin_family = AF_INET ;
+	tracker_addr.sin_port = htons(tracker_port) ;
+	tracker_addr.sin_addr.s_addr = inet_addr(tracker_IP) ;
+
+	if( connect(tracker_socket, (struct sockaddr*)&tracker_addr, sizeof tracker_addr ) < 0 )
+	{
+		printf("cannot connect to the tracker.\n") ;
+		close(tracker_socket) ;
+		return ;
+	}
+
+	char cmd_t[32] = "logout" ;
+	send(tracker_socket, cmd_t, sizeof cmd_t, 0) ; 
+
+	char data[128] ;
+	sprintf(data, "%s %d", my_IP, my_port);
+	send(tracker_socket, data, sizeof data, 0) ;
+
+	close(tracker_socket) ;
+	logged_in = false ;
 }
 
 void login_and_register(const char* username, const char* passwd)
@@ -97,17 +215,8 @@ void login_and_register(const char* username, const char* passwd)
 
 	pthread_t listen_thread ;
 	pthread_create(&listen_thread, NULL, listen_as_server, (void*)&tu);
+	pthread_detach(listen_thread) ;
 	printf("Listening thread detached.\n");
-
-	char tracker_IP[32] ;
-	int tracker_port ;
-
-	if(read_tracker_info(tracker_IP, tracker_port, tracker_info_file) < 0)
-	{
-		/* ADD LOGIC FOR TWO TRACKER SYSTEM */
-		printf("Tracker info file seems to be unreadable/empty.\n") ;
-		return ;
-	}
 
 	printf("I read %s and %d\n", tracker_IP, tracker_port) ;
 
@@ -132,14 +241,12 @@ void login_and_register(const char* username, const char* passwd)
 		return ;
 	}
 
+	char cmd_t[32] = "login" ;
+	send(tracker_socket, cmd_t, sizeof cmd_t, 0) ; 
+
 	char data[128] ;
 	sprintf(data, "%s %d", my_IP, my_port);
 	send(tracker_socket, data, sizeof data, 0) ;
-
-	char msg[100] ;
-	recv(tracker_socket, msg, sizeof msg, 0) ;
-
-	printf("Tracker sent me : %s\n", msg) ;
 
 	close(tracker_socket) ;
 }
@@ -171,7 +278,6 @@ int read_tracker_info(char tracker_IP[32], int &tracker_port, const char* tracke
 
 void* listen_as_server(void* args)
 {
-
 	struct transfer_unit *tu = (struct transfer_unit*)args ;
 
 	int listen_socket ;
@@ -198,9 +304,6 @@ void* listen_as_server(void* args)
 
 	int sz = sizeof list_sock ;
 	int active_sock = accept(listen_socket, (struct sockaddr*)&list_sock, (socklen_t*)&sz) ;
-
-	char msg[100] = "hahaha this client is a server as well lol.\n" ;
-	send(active_sock, msg, sizeof msg, 0) ;
 
 	close(active_sock);
 	close(listen_socket) ;

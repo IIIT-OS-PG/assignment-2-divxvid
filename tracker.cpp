@@ -22,6 +22,15 @@ struct transfer_unit
 	struct sockaddr_in c_addr ;
 };
 
+struct file_data
+{
+	const char* IP ;
+	const int port ;
+	int group_id ;
+	int file_size ;
+	char* chunks_available ;
+};
+
 void update_client_info_file()
 {
 	FILE *fp = fopen("client_info.txt", "w");
@@ -61,38 +70,66 @@ int connect_peer(const char* IP, const int port)
 		return -1; 
 	}
 
-	char msg[100] ;
-	recv(active_sock, msg, sizeof msg, 0) ;
-	printf("The server side of the client sent me : %s\n", msg) ;
-
 	close(active_sock); 
 	return 0 ;
+}
+
+void login_stub(struct transfer_unit *tf)
+{
+	char data[128] ;
+	recv(tf->peer_socket, data, sizeof data, 0);
+	std::string temp(data) ;
+	client_info_vector.push_back(temp);
+	update_client_info_file();
+}
+
+void logout_stub(struct transfer_unit* tf)
+{
+	char data[128] ;
+	recv(tf->peer_socket, data, sizeof data, 0);
+	std::string temp(data) ;
+	int idx = -1 ;
+	for(int i = 0 ; i < client_info_vector.size() ; ++i)
+	{
+		if(client_info_vector[i] == data)
+		{
+			idx = i ;
+			break ;
+		}
+	}
+	if(idx != -1)
+	{
+		client_info_vector.erase(client_info_vector.begin()+idx);
+		update_client_info_file() ;	
+	}
+}
+
+void upload_file(struct transfer_unit* tf)
+{
+	char info[2048] ;
+	recv(tf->peer_socket, info, sizeof info, 0);
+	printf("I received : %s\n", info);
 }
 
 void* communicate_peer(void* args)
 {
 	struct transfer_unit *tf = (transfer_unit*)args ;
 
-	char data[128] ;
-	recv(tf->peer_socket, data, sizeof data, 0);
-	char IP[32] ;
-	int port ;
-	sscanf(data, "%s%d", IP, &port);
+	char cmd[32] ;
+	recv(tf->peer_socket, cmd, sizeof cmd, 0) ;
 
-	printf("I got : %s and %d\n", IP, port) ;
-
-	if(connect_peer(IP, port) == 0)
+	if(strcmp(cmd, "login") == 0)
 	{
-		std::string temp(data) ;
-		client_info_vector.push_back(temp);
-		update_client_info_file();
+		login_stub(tf) ;
+	} else if (strcmp(cmd, "logout") == 0)
+	{
+		logout_stub(tf);
+	} else if(strcmp(cmd, "upload_file") == 0)
+	{
+		upload_file(tf) ;
 	}
 
-	char buff[32] = "Hello from the Tracker!\n" ;
-	send(tf->peer_socket, buff, sizeof buff, 0) ;
-
 	close(tf->peer_socket) ;
-	printf("Client seen : %s : %d\n", inet_ntoa(tf->c_addr.sin_addr), tf->c_addr.sin_port);
 	pthread_exit(NULL) ;
 }
 
@@ -131,26 +168,13 @@ int main(int argc, char* argv[])
 	listen(tracker_socket, 10) ;
 	unsigned int client_sock_size = sizeof c_addr ;
 
-	/*
-	peer_socket = accept(tracker_socket, (struct sockaddr*)&c_addr, &client_sock_size);
-	if(peer_socket < 0)
-	{
-		printf("cannot connect to the peer.\n");
-		close(tracker_socket) ;
-		return 0 ;
-	}
-
-	char buff[32] = "Hello from the Tracker!\n" ;
-	send(peer_socket, buff, sizeof buff, 0) ;
-
-	close(peer_socket) ;
-	*/
 	while(1)
 	{
 		peer_socket = accept(tracker_socket, (struct sockaddr*)&c_addr, &client_sock_size);
 		transfer_unit tf = {peer_socket, c_addr} ;
 		pthread_t tid ;
 		pthread_create(&tid, NULL, communicate_peer, (void*)&tf);
+		pthread_detach(tid);
 	}
 
 	close(tracker_socket) ;
