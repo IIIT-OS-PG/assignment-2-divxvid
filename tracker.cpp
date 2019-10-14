@@ -191,6 +191,7 @@ void download_file(struct transfer_unit* tf)
 	}
 
 	send(tf->peer_socket, &transmission_size, sizeof transmission_size, 0) ;
+	if(transmission_size == 0) return ;
 	for(const std::string &s : files_in_tracker[f_name])
 	{
 		char trans[2048] ;

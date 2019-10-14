@@ -156,6 +156,13 @@ void download_file(int g_id, char *fname, char* dest_path)
 	int num_clients ;
 	recv(tracker_socket, &num_clients, sizeof num_clients, 0);
 
+	if(num_clients == 0)
+	{
+		printf("None of the peers have this file.\n");
+		close(tracker_socket) ;
+		return ; 
+	}
+
 	std::vector<file_data> clients_with_file ;
 	char IP[32] ;
 	int port ;
@@ -168,10 +175,34 @@ void download_file(int g_id, char *fname, char* dest_path)
 		clients_with_file.emplace_back(IP, port, chunks);
 	}
 
+	std::vector<std::string> chunks_from_clients ;
 	for(const file_data &fd : clients_with_file)
 	{
-		printf("%s %d %s\n", fd.IP, fd.port, fd.chunks_available);
+		chunks_from_clients.push_back(fd.chunks_available);
 	}
+
+	int num_chunks = chunks_from_clients[0].length() ;
+	std::vector<int> chunk_selection(num_chunks, -1) ;
+
+	for(int i = 0 ; i < num_chunks ; ++i)
+	{
+		int x = i % num_clients ;
+		while(x < num_clients && chunks_from_clients[x][i] != '1')
+		{
+			++x ;
+		}
+		if(x == num_clients)
+		{
+			continue ;
+		}
+		chunk_selection[i] = x ;
+	}
+
+	for(const int &x : chunk_selection)
+	{
+		printf("%d ", x);
+	}
+	printf("\n") ;
 
 	close(tracker_socket) ;
 }
@@ -206,7 +237,7 @@ void list_files(int g_id)
 
 	char cmd[32] = "list_files" ;
 	send(tracker_socket, cmd, sizeof cmd, 0) ;
-	printf("COmmand sent.\n") ;
+	printf("Command sent.\n") ;
 	int n_files ;
 	recv(tracker_socket, &n_files, sizeof n_files, 0);
 
