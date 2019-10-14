@@ -175,7 +175,7 @@ void download_file(struct transfer_unit* tf)
 	for(const struct file_data &fd : files_info_vector)
 	{
 		char addx[2048] ;
-		sprintf(addx, "%s %d %s", fd.IP, fd.port, fd.chunks_available);
+		sprintf(addx, "%s %d %d %s", fd.IP, fd.port, fd.file_size, fd.chunks_available);
 		std::string temp(addx) ;
 		files_in_tracker[fd.file_name].push_back(temp);
 	}

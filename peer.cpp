@@ -14,24 +14,33 @@
 
 struct transfer_unit
 {
-	const char* my_IP ;
-	const int my_port ;
+	char* my_IP ;
+	int my_port ;
 };
+
 
 struct file_data
 {
 	char IP[32] ;
 	int port ;
+	int file_size ;
 	char chunks_available[1536] ;
 
 	file_data() {}
-	file_data(char *a, int b, char *c)
+	file_data(char *a, int b, int d,char *c)
 	{
 		strcpy(IP, a);
 		port = b ;
+		file_size = d ;
 		strcpy(chunks_available, c);
 	}
 } ;
+
+struct transfer_unit2
+{
+	int sockfd ;
+	struct sockaddr_in c_addr ;
+};
 
 bool logged_in ;
 char *my_IP ;
@@ -39,6 +48,8 @@ int my_port ;
 char *tracker_info_file ;
 char tracker_IP[32] ;
 int tracker_port ;
+pthread_mutex_t lock ;
+
 
 int read_tracker_info(char*, int&, const char*);
 void* listen_as_server(void*) ;
@@ -48,6 +59,8 @@ void logout() ;
 void upload_file(const char*, int);
 void list_files(int);
 void download_file(int, char*, char*);
+void download_file_chunk(std::vector<file_data>&, int, FILE*, int, int, char*) ;
+void* send_chunk(void*) ;
 
 int main(int argc, char* argv[])
 {
@@ -74,6 +87,7 @@ int main(int argc, char* argv[])
 	{
 		printf(">> ");
 		fgets(command, sizeof command, stdin) ;
+		if(strlen(command) == 1) continue ;
 		char *cmd = strtok((char*)command, " \n");
 		if(strcmp(cmd, "login") == 0)
 		{
@@ -141,7 +155,7 @@ void download_file(int g_id, char *fname, char* dest_path)
 
 	if( connect(tracker_socket, (struct sockaddr*)&tracker_addr, sizeof tracker_addr ) < 0 )
 	{
-		printf("cannot connect to the tracker.\n") ;
+		printf("cannot connect to the tracker -download_file.\n") ;
 		close(tracker_socket) ;
 		return ;
 	}
@@ -166,13 +180,15 @@ void download_file(int g_id, char *fname, char* dest_path)
 	std::vector<file_data> clients_with_file ;
 	char IP[32] ;
 	int port ;
+	int file_size ;
 	char chunks[1536] ;
 	for(int i = 0 ; i < num_clients ; ++i)
 	{
 		char trans[2048] ;
 		recv(tracker_socket, trans, sizeof trans, 0);
-		sscanf(trans, "%s %d %s", IP, &port, chunks);
-		clients_with_file.emplace_back(IP, port, chunks);
+		printf("%s\n", trans) ;
+		sscanf(trans, "%s %d %d %s", IP, &port, &file_size, chunks);
+		clients_with_file.emplace_back(IP, port, file_size, chunks);
 	}
 
 	std::vector<std::string> chunks_from_clients ;
@@ -186,25 +202,121 @@ void download_file(int g_id, char *fname, char* dest_path)
 
 	for(int i = 0 ; i < num_chunks ; ++i)
 	{
-		int x = i % num_clients ;
-		while(x < num_clients && chunks_from_clients[x][i] != '1')
+		for(int offset = 0 ; offset < num_clients ; ++offset)
 		{
-			++x ;
+			int idx = (i + offset) % num_clients ;
+			if(chunks_from_clients[idx][i] == '1')
+			{
+				chunk_selection[i] = idx ;
+				break ;
+			}
 		}
-		if(x == num_clients)
-		{
-			continue ;
-		}
-		chunk_selection[i] = x ;
 	}
 
-	for(const int &x : chunk_selection)
+	FILE* fp = fopen(dest_path, "r+");
+	if(fp != 0)
 	{
-		printf("%d ", x);
+		printf("The file already exists. Please provide with a different name/path.\n") ;
+	} else {
+		fp = fopen(dest_path, "w");
+		fclose(fp) ;
+		fp = fopen(dest_path, "r+");
 	}
-	printf("\n") ;
+
+	for(int i = 0 ; i < num_chunks ; ++i)
+	{
+		download_file_chunk(clients_with_file, chunk_selection[i], fp, i, num_chunks, fname);
+	}
+
+	fclose(fp);
 
 	close(tracker_socket) ;
+}
+
+void download_file_chunk(std::vector<file_data> &clients, int client_idx, FILE* fp, int chunk_no, int num_chunks, char *fname) 
+{
+	if(client_idx == -1)
+	{
+		return ;
+	}
+	int sender_socket ;
+	if( (sender_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	{
+		printf("Cannot create the socket.\n") ;
+		return;
+	}
+
+	struct sockaddr_in sender_addr ;
+	printf("TEST : %d %s\n", clients[client_idx].port, clients[client_idx].IP);
+
+	bzero( (char*)&sender_addr, sizeof sender_addr ) ;
+	sender_addr.sin_family = AF_INET ;
+	sender_addr.sin_port = htons(clients[client_idx].port) ;
+	sender_addr.sin_addr.s_addr = inet_addr(clients[client_idx].IP) ;
+
+	if( connect(sender_socket, (struct sockaddr*)&sender_addr, sizeof sender_addr ) < 0 )
+	{
+		printf("cannot connect to the sender.\n") ;
+		close(sender_socket) ;
+		return ;
+	}
+
+	send(sender_socket, &chunk_no, sizeof chunk_no, 0);
+	char f_name[64] ;
+	strcpy(f_name, fname);
+	send(sender_socket, f_name, sizeof f_name, 0) ;
+
+	int bytes_to_recv = (chunk_no == num_chunks-1 ? clients[client_idx].file_size - chunk_no*CHUNK_SIZE : CHUNK_SIZE);
+	send(sender_socket, &bytes_to_recv, sizeof bytes_to_recv, 0) ;
+	printf("sent all the stuff.\n") ;
+
+	pthread_mutex_lock(&lock);
+	fseek(fp, CHUNK_SIZE*chunk_no, SEEK_SET);
+	char buf[512] ;
+	int bytes_recv ;
+	//int chunk_sent = 0;
+	while( bytes_to_recv > 0 && (bytes_recv = recv(sender_socket, buf, sizeof buf, 0)) > 0)
+	{
+		//printf("%d\n", ++chunk_sent);
+		fwrite(buf, sizeof(char), bytes_recv, fp);
+		bytes_to_recv -= bytes_recv ;
+		//printf("%d\n", size_to_recv) ;
+	}
+	pthread_mutex_unlock(&lock) ;
+	close(sender_socket);
+}
+
+void* send_chunk(void* args)
+{
+	struct transfer_unit2* tu = (struct transfer_unit2*)args ;
+	
+	int chunk_no ;
+	recv(tu->sockfd, &chunk_no, sizeof chunk_no, 0);
+	printf("Chunk NUmber i got is : %d\n", chunk_no);
+
+	char f_name[64] ;
+	recv(tu->sockfd, f_name, sizeof f_name, 0);
+
+	int bytes_to_send ;
+	recv(tu->sockfd, &bytes_to_send, sizeof bytes_to_send, 0);
+
+	printf("File name : %s\nBytes to send : %d\n", f_name, bytes_to_send);
+
+	FILE* fp = fopen(f_name, "r");
+
+	char buff[512] ;
+	int bytes_read ;
+	//int bytes_to_send = (ack == num_chunks ? file_size - (CHUNK_SIZE * (num_chunks-1)) : CHUNK_SIZE) ;
+	fseek(fp, CHUNK_SIZE*chunk_no, SEEK_SET);
+	while( bytes_to_send > 0 && (bytes_read = fread(buff, sizeof(char), sizeof buff, fp)) > 0 )
+	{
+		send(tu->sockfd, buff, bytes_read, 0);
+		bytes_to_send -= bytes_read ;
+	}
+
+	fclose(fp) ;
+	close(tu->sockfd);
+	pthread_exit(NULL) ;
 }
 
 void list_files(int g_id)
@@ -381,10 +493,13 @@ void login_and_register(const char* username, const char* passwd)
 
 	logged_in = true ;
 
-	struct transfer_unit tu = {my_IP, my_port};
+	struct transfer_unit *tu = new struct transfer_unit();
+	tu->my_IP = my_IP ;
+	tu->my_port = my_port ;
+	printf("TU CHECK : %s %d\n", tu->my_IP, tu->my_port) ;
 
 	pthread_t listen_thread ;
-	pthread_create(&listen_thread, NULL, listen_as_server, (void*)&tu);
+	pthread_create(&listen_thread, NULL, listen_as_server, tu);
 	pthread_detach(listen_thread) ;
 	printf("Listening thread detached.\n");
 
@@ -449,19 +564,21 @@ int read_tracker_info(char tracker_IP[32], int &tracker_port, const char* tracke
 void* listen_as_server(void* args)
 {
 	struct transfer_unit *tu = (struct transfer_unit*)args ;
-
+	printf("I got : %d\n", tu->my_port);
 	int listen_socket ;
 	if( (listen_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
 		printf("Couldn't create the listening socket.\n") ;
 		return NULL ;
-	}
+	}	
 
-	struct sockaddr_in list_sock ;
+	struct sockaddr_in list_sock, client_sock ;
 	bzero( (char*)&list_sock, sizeof list_sock );
 	list_sock.sin_family = AF_INET ;
 	list_sock.sin_port = htons(tu->my_port) ;
 	list_sock.sin_addr.s_addr = inet_addr(tu->my_IP) ;
+
+	printf("Listening port : %d\n", (int)list_sock.sin_port) ;
 
 	if(bind(listen_socket, (struct sockaddr*)&list_sock, sizeof list_sock) < 0)
 	{
@@ -472,10 +589,21 @@ void* listen_as_server(void* args)
 
 	listen(listen_socket, 10) ;
 
-	int sz = sizeof list_sock ;
-	int active_sock = accept(listen_socket, (struct sockaddr*)&list_sock, (socklen_t*)&sz) ;
+	int sz = sizeof client_sock ;
+	int active_sock ;
+	while(1)
+	{
+		//printf("Waiting for connections on IP : %s and port : %d.\n", tu.my_port) ;
+		active_sock = accept(listen_socket, (struct sockaddr*)&client_sock, (socklen_t*)&sz) ;
+		printf("Got a connection.\n");
+		struct transfer_unit2 *tu = new struct transfer_unit2() ;
+		tu->sockfd = active_sock ;
+		tu->c_addr = client_sock ;
+		pthread_t chunk_sending_thread ;
+		pthread_create(&chunk_sending_thread, NULL, send_chunk, tu);
+		pthread_detach(chunk_sending_thread) ;
+	}
 
-	close(active_sock);
 	close(listen_socket) ;
 	pthread_exit(NULL) ;
 }
