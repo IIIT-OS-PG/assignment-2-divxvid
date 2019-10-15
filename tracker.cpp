@@ -123,18 +123,12 @@ void upload_file(struct transfer_unit* tf)
 {
 	char info[2048] ;
 	recv(tf->peer_socket, info, sizeof info, 0);
-	printf("I received : %s\n", info);
 	char f_name[128] ;
 	char chunk_info[1536] ;
 	char peer_IP[32] ;
 	int peer_port, file_size, peer_g_id ;
 	sscanf(info, "%s %s %d %d %d %s", f_name, peer_IP, &peer_port, &peer_g_id, &file_size, chunk_info);
 	files_info_vector.emplace_back(f_name, peer_IP, peer_port, peer_g_id, file_size, chunk_info);
-	for(const file_data &fd : files_info_vector)
-	{
-		printf("fname : %s\nPeer IP : %s\nPeer port : %d\n", fd.file_name, fd.IP , fd.port);
-		printf("Peer GID : %d\nFile Size : %d\nChunk info : %s\n", fd.group_id, fd.file_size, fd.chunks_available);
-	}
 }
 
 void list_files(struct transfer_unit* tf)
@@ -226,7 +220,6 @@ void update_file_data(struct transfer_unit* tu)
 	if(idx == -1)
 	{
 		//new entry.
-		printf("Entry not found.\n") ;
 		char chunks[1536] ;
 		for(int i = 0 ; i < num_chunks ; ++i)
 		{
@@ -236,12 +229,6 @@ void update_file_data(struct transfer_unit* tu)
 		files_info_vector.emplace_back(fname, IP, port, 0, file_size, chunks);
 	} else {
 		files_info_vector[idx].chunks_available[chunk_num] = '1' ;
-	}
-
-	for(const file_data &fd : files_info_vector)
-	{
-		printf("fname : %s\nPeer IP : %s\nPeer port : %d\n", fd.file_name, fd.IP , fd.port);
-		printf("Peer GID : %d\nFile Size : %d\nChunk info : %s\n", fd.group_id, fd.file_size, fd.chunks_available);
 	}
 
 }

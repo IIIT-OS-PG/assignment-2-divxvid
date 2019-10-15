@@ -112,7 +112,7 @@ int main(int argc, char* argv[])
 		{
 			char *f_name = strtok(NULL, " \n");
 			char *g_id_s = strtok(NULL, " \n");
-			int g_id = atoi(g_id_s);
+			int g_id = (g_id_s == NULL ? 0 : atoi(g_id_s));
 			upload_file(f_name, g_id) ;
 		} else if(strcmp(cmd, "list_files") == 0)
 		{
@@ -187,7 +187,6 @@ void download_file(int g_id, char *fname, char* dest_path)
 	{
 		char trans[2048] ;
 		recv(tracker_socket, trans, sizeof trans, 0);
-		printf("%s\n", trans) ;
 		sscanf(trans, "%s %d %d %s", IP, &port, &file_size, chunks);
 		if(strcmp(IP, my_IP) == 0 && port == my_port) continue ;
 		clients_with_file.emplace_back(IP, port, file_size, chunks);
@@ -249,7 +248,6 @@ void download_file_chunk(std::vector<file_data> &clients, int client_idx, FILE* 
 	}
 
 	struct sockaddr_in sender_addr ;
-	printf("TEST : %d %s\n", clients[client_idx].port, clients[client_idx].IP);
 
 	bzero( (char*)&sender_addr, sizeof sender_addr ) ;
 	sender_addr.sin_family = AF_INET ;
@@ -270,7 +268,6 @@ void download_file_chunk(std::vector<file_data> &clients, int client_idx, FILE* 
 
 	int bytes_to_recv = (chunk_no == num_chunks-1 ? clients[client_idx].file_size - chunk_no*CHUNK_SIZE : CHUNK_SIZE);
 	send(sender_socket, &bytes_to_recv, sizeof bytes_to_recv, 0) ;
-	printf("sent all the stuff.\n") ;
 
 	char buf[512] ;
 	int bytes_recv ;
@@ -282,8 +279,6 @@ void download_file_chunk(std::vector<file_data> &clients, int client_idx, FILE* 
 
 	pthread_mutex_lock(&lock);
 	fseek(fp, CHUNK_SIZE*chunk_no, SEEK_SET);
-	//int chunk_sent = 0;
-	printf("Bytes to receive : %d\n", bytes_to_recv); 
 	while( bytes_to_recv > 0 && (bytes_recv = recv(sender_socket, buf, sizeof buf, 0)) > 0)
 	{
 		//printf("%d\n", ++chunk_sent);
@@ -292,7 +287,6 @@ void download_file_chunk(std::vector<file_data> &clients, int client_idx, FILE* 
 		bytes_to_recv -= bytes_recv ;
 		//printf("%d\n", size_to_recv) ;
 	}
-	printf("Final VAL : %d %d\n", bytes_to_recv, bytes_recv) ;
 
 	pthread_mutex_unlock(&lock) ;
 	unsigned char hash[20] ;
@@ -344,7 +338,6 @@ void* send_chunk(void* args)
 	
 	int chunk_no ;
 	recv(tu->sockfd, &chunk_no, sizeof chunk_no, 0);
-	printf("Chunk NUmber i got is : %d\n", chunk_no);
 
 	char f_name[64] ;
 	recv(tu->sockfd, f_name, sizeof f_name, 0);
@@ -352,14 +345,11 @@ void* send_chunk(void* args)
 	int bytes_to_send ;
 	recv(tu->sockfd, &bytes_to_send, sizeof bytes_to_send, 0);
 
-	printf("File name : %s\nBytes to send : %d\n", f_name, bytes_to_send);
-
 	FILE* fp = fopen(f_name, "r");
 
 	char buff[512] ;
 	int bytes_read ;
 	
-	printf("Bytes to send : %d\n", bytes_to_send) ;
 	//int bytes_to_send = (ack == num_chunks ? file_size - (CHUNK_SIZE * (num_chunks-1)) : CHUNK_SIZE) ;
 	fseek(fp, CHUNK_SIZE*chunk_no, SEEK_SET);
 	unsigned char sha_buff[CHUNK_SIZE] ;
@@ -368,11 +358,6 @@ void* send_chunk(void* args)
 	unsigned char hash[20];
 	SHA1(sha_buff, bytes_read, hash);
 
-	printf("Hash sent : ") ;
-	for(int i = 0 ; i < 20 ; ++i)
-		printf("%02x", hash[i]);
-	printf("\n") ;
-
 	send(tu->sockfd, hash, sizeof hash, 0) ;
 	fseek(fp, CHUNK_SIZE*chunk_no, SEEK_SET);
 	while( bytes_to_send > 0 && (bytes_read = fread(buff, sizeof(char), sizeof buff, fp)) > 0 )
@@ -380,7 +365,6 @@ void* send_chunk(void* args)
 		send(tu->sockfd, buff, bytes_read, 0);
 		bytes_to_send -= bytes_read ;
 	}
-	printf("Final value : %d\n", bytes_to_send);
 	fclose(fp) ;
 
 	close(tu->sockfd);
@@ -417,11 +401,9 @@ void list_files(int g_id)
 
 	char cmd[32] = "list_files" ;
 	send(tracker_socket, cmd, sizeof cmd, 0) ;
-	printf("Command sent.\n") ;
 	int n_files ;
 	recv(tracker_socket, &n_files, sizeof n_files, 0);
 
-	printf("The number of files is : %d\n", n_files);
 	char f_name_s[128] ;
 	for(int i = 0 ; i < n_files ; ++i)
 	{
@@ -481,7 +463,6 @@ void upload_file(const char* f_name, int g_id)
 
 	char info[2048] ;
 	sprintf(info, "%s %s %d %d %d %s", f_name, my_IP, my_port, g_id, file_size, chunk_info);
-	printf("INFO is : %s\n", info) ;
 
 	send(tracker_socket, info, sizeof info, 0) ;
 
@@ -564,15 +545,11 @@ void login_and_register(const char* username, const char* passwd)
 	struct transfer_unit *tu = new struct transfer_unit();
 	tu->my_IP = my_IP ;
 	tu->my_port = my_port ;
-	printf("TU CHECK : %s %d\n", tu->my_IP, tu->my_port) ;
 
 	pthread_t listen_thread ;
 	pthread_create(&listen_thread, NULL, listen_as_server, tu);
 	pthread_detach(listen_thread) ;
-	printf("Listening thread detached.\n");
-
-	printf("I read %s and %d\n", tracker_IP, tracker_port) ;
-
+	
 	int tracker_socket ;
 	if( (tracker_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
@@ -632,7 +609,6 @@ int read_tracker_info(char tracker_IP[32], int &tracker_port, const char* tracke
 void* listen_as_server(void* args)
 {
 	struct transfer_unit *tu = (struct transfer_unit*)args ;
-	printf("I got : %d\n", tu->my_port);
 	int listen_socket ;
 	if( (listen_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
@@ -646,7 +622,6 @@ void* listen_as_server(void* args)
 	list_sock.sin_port = htons(tu->my_port) ;
 	list_sock.sin_addr.s_addr = inet_addr(tu->my_IP) ;
 
-	printf("Listening port : %d\n", (int)list_sock.sin_port) ;
 
 	if(bind(listen_socket, (struct sockaddr*)&list_sock, sizeof list_sock) < 0)
 	{
@@ -663,7 +638,6 @@ void* listen_as_server(void* args)
 	{
 		//printf("Waiting for connections on IP : %s and port : %d.\n", tu.my_port) ;
 		active_sock = accept(listen_socket, (struct sockaddr*)&client_sock, (socklen_t*)&sz) ;
-		printf("Got a connection.\n");
 		struct transfer_unit2 *tu = new struct transfer_unit2() ;
 		tu->sockfd = active_sock ;
 		tu->c_addr = client_sock ;
