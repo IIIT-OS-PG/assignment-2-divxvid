@@ -200,6 +200,52 @@ void download_file(struct transfer_unit* tf)
 	}
 }
 
+void update_file_data(struct transfer_unit* tu)
+{
+	char new_info[2048] ;
+	recv(tu->peer_socket, new_info, sizeof new_info, 0);
+
+	char IP[32] ;
+	int port ;
+	int chunk_num, num_chunks, file_size ;
+	char fname[128] ;
+
+	sscanf(new_info, "%s %d %s %d %d %d", IP, &port, fname, &chunk_num, &num_chunks, &file_size);
+
+	int idx = -1 ;
+	for(int i = 0 ; i < files_info_vector.size() ; ++i)
+	{
+		file_data x = files_info_vector[i] ;
+		if(strcmp(IP, x.IP) == 0 && strcmp(fname, x.file_name) == 0 && port == x.port)
+		{
+			idx = i ;
+			break ;
+		}
+	}
+
+	if(idx == -1)
+	{
+		//new entry.
+		printf("Entry not found.\n") ;
+		char chunks[1536] ;
+		for(int i = 0 ; i < num_chunks ; ++i)
+		{
+			chunks[i] = (i == chunk_num ? '1' : '0') ;
+		}
+		chunks[num_chunks] = '\0' ;
+		files_info_vector.emplace_back(fname, IP, port, 0, file_size, chunks);
+	} else {
+		files_info_vector[idx].chunks_available[chunk_num] = '1' ;
+	}
+
+	for(const file_data &fd : files_info_vector)
+	{
+		printf("fname : %s\nPeer IP : %s\nPeer port : %d\n", fd.file_name, fd.IP , fd.port);
+		printf("Peer GID : %d\nFile Size : %d\nChunk info : %s\n", fd.group_id, fd.file_size, fd.chunks_available);
+	}
+
+}
+
 void* communicate_peer(void* args)
 {
 	struct transfer_unit *tf = (transfer_unit*)args ;
@@ -222,6 +268,9 @@ void* communicate_peer(void* args)
 	} else if(strcmp(cmd, "download_file") == 0)
 	{
 		download_file(tf) ;
+	} else if(strcmp(cmd, "update_file_data") == 0)
+	{
+		update_file_data(tf);
 	}
 
 	close(tf->peer_socket) ;

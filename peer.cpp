@@ -59,7 +59,7 @@ void logout() ;
 void upload_file(const char*, int);
 void list_files(int);
 void download_file(int, char*, char*);
-void download_file_chunk(std::vector<file_data>&, int, FILE*, int, int, char*) ;
+void download_file_chunk(std::vector<file_data>&, int, FILE*, int, int, char*, int) ;
 void* send_chunk(void*) ;
 
 int main(int argc, char* argv[])
@@ -225,7 +225,7 @@ void download_file(int g_id, char *fname, char* dest_path)
 
 	for(int i = 0 ; i < num_chunks ; ++i)
 	{
-		download_file_chunk(clients_with_file, chunk_selection[i], fp, i, num_chunks, fname);
+		download_file_chunk(clients_with_file, chunk_selection[i], fp, i, num_chunks, fname, file_size);
 	}
 
 	fclose(fp);
@@ -233,7 +233,7 @@ void download_file(int g_id, char *fname, char* dest_path)
 	close(tracker_socket) ;
 }
 
-void download_file_chunk(std::vector<file_data> &clients, int client_idx, FILE* fp, int chunk_no, int num_chunks, char *fname) 
+void download_file_chunk(std::vector<file_data> &clients, int client_idx, FILE* fp, int chunk_no, int num_chunks, char *fname, int file_size) 
 {
 	if(client_idx == -1)
 	{
@@ -284,6 +284,37 @@ void download_file_chunk(std::vector<file_data> &clients, int client_idx, FILE* 
 	}
 	pthread_mutex_unlock(&lock) ;
 	close(sender_socket);
+
+	int tracker_socket ;
+	if( (tracker_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	{
+		printf("Cannot create the socket.\n") ;
+		return;
+	}
+
+	struct sockaddr_in tracker_addr ;
+	//printf("TEST : %d %s\n", clients[client_idx].port, clients[client_idx].IP);
+
+	bzero( (char*)&tracker_addr, sizeof tracker_addr ) ;
+	tracker_addr.sin_family = AF_INET ;
+	tracker_addr.sin_port = htons(tracker_port) ;
+	tracker_addr.sin_addr.s_addr = inet_addr(tracker_IP) ;
+
+	if( connect(tracker_socket, (struct sockaddr*)&tracker_addr, sizeof tracker_addr ) < 0 )
+	{
+		printf("cannot connect to the Tracker.\n") ;
+		close(tracker_socket) ;
+		return ;
+	}
+
+	char cmd[32] = "update_file_data" ;
+	send(tracker_socket, cmd, sizeof cmd, 0) ;
+
+	char tmp_buf[2048] ;
+	sprintf(tmp_buf, "%s %d %s %d %d %d", my_IP, my_port, fname, chunk_no, num_chunks, file_size) ;
+	send(tracker_socket, tmp_buf, sizeof tmp_buf, 0) ;
+
+	close(tracker_socket) ; 
 }
 
 void* send_chunk(void* args)
