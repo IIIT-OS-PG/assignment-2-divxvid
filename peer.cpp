@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <vector>
 #include <string>
+#include <openssl/sha.h>
 
 #define CHUNK_SIZE 524288
 
@@ -188,6 +189,7 @@ void download_file(int g_id, char *fname, char* dest_path)
 		recv(tracker_socket, trans, sizeof trans, 0);
 		printf("%s\n", trans) ;
 		sscanf(trans, "%s %d %d %s", IP, &port, &file_size, chunks);
+		if(strcmp(IP, my_IP) == 0 && port == my_port) continue ;
 		clients_with_file.emplace_back(IP, port, file_size, chunks);
 	}
 
@@ -270,19 +272,38 @@ void download_file_chunk(std::vector<file_data> &clients, int client_idx, FILE* 
 	send(sender_socket, &bytes_to_recv, sizeof bytes_to_recv, 0) ;
 	printf("sent all the stuff.\n") ;
 
-	pthread_mutex_lock(&lock);
-	fseek(fp, CHUNK_SIZE*chunk_no, SEEK_SET);
 	char buf[512] ;
 	int bytes_recv ;
+	SHA_CTX ctx ;
+	SHA1_Init(&ctx) ;
+
+	unsigned char hash_recv[20] ;
+	recv(sender_socket, hash_recv, sizeof hash_recv, 0);
+
+	pthread_mutex_lock(&lock);
+	fseek(fp, CHUNK_SIZE*chunk_no, SEEK_SET);
 	//int chunk_sent = 0;
+	printf("Bytes to receive : %d\n", bytes_to_recv); 
 	while( bytes_to_recv > 0 && (bytes_recv = recv(sender_socket, buf, sizeof buf, 0)) > 0)
 	{
 		//printf("%d\n", ++chunk_sent);
+		SHA1_Update(&ctx, buf, bytes_recv) ;
 		fwrite(buf, sizeof(char), bytes_recv, fp);
 		bytes_to_recv -= bytes_recv ;
 		//printf("%d\n", size_to_recv) ;
 	}
+	printf("Final VAL : %d %d\n", bytes_to_recv, bytes_recv) ;
+
 	pthread_mutex_unlock(&lock) ;
+	unsigned char hash[20] ;
+	SHA1_Final(hash, &ctx) ;
+
+	if(strcmp((char*)hash, (char*)hash_recv) != 0)
+	{
+		//retransmission.
+		printf("Retransmission needed.\n") ;
+	}
+
 	close(sender_socket);
 
 	int tracker_socket ;
@@ -337,15 +358,31 @@ void* send_chunk(void* args)
 
 	char buff[512] ;
 	int bytes_read ;
+	
+	printf("Bytes to send : %d\n", bytes_to_send) ;
 	//int bytes_to_send = (ack == num_chunks ? file_size - (CHUNK_SIZE * (num_chunks-1)) : CHUNK_SIZE) ;
 	fseek(fp, CHUNK_SIZE*chunk_no, SEEK_SET);
+	unsigned char sha_buff[CHUNK_SIZE] ;
+	bytes_read = fread(sha_buff, sizeof(char), sizeof sha_buff, fp);
+
+	unsigned char hash[20];
+	SHA1(sha_buff, bytes_read, hash);
+
+	printf("Hash sent : ") ;
+	for(int i = 0 ; i < 20 ; ++i)
+		printf("%02x", hash[i]);
+	printf("\n") ;
+
+	send(tu->sockfd, hash, sizeof hash, 0) ;
+	fseek(fp, CHUNK_SIZE*chunk_no, SEEK_SET);
 	while( bytes_to_send > 0 && (bytes_read = fread(buff, sizeof(char), sizeof buff, fp)) > 0 )
-	{
+	{	
 		send(tu->sockfd, buff, bytes_read, 0);
 		bytes_to_send -= bytes_read ;
 	}
-
+	printf("Final value : %d\n", bytes_to_send);
 	fclose(fp) ;
+
 	close(tu->sockfd);
 	pthread_exit(NULL) ;
 }
